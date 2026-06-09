@@ -1,0 +1,13 @@
+# 核心运行依赖
+openai>=1.0.0          # LLM 调用（兼容 DeepSeek / OpenAI / 其他 OpenAI 格式 API）
+python-dotenv>=1.0.0   # 读取 .env 文件
+
+# 搜索工具（二选一，自动降级）
+ddgs>=6.0.0            # DuckDuckGo 搜索（免费，无需 Key）
+tavily-python>=0.3.0   # Tavily 搜索（可选，需要 TAVILY_API_KEY）
+
+# 记忆工具（RAG，可选）
+chromadb>=0.4.0        # 向量数据库，memory.py 使用
+
+# MCP Server（可选，仅运行 mcp_server/server.py 时需要）
+mcp>=1.0.0

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "baoyu-markdown-to-html": {
+      "source": "JimLiu/baoyu-skills",
+      "sourceType": "github",
+      "skillPath": "skills/baoyu-markdown-to-html/SKILL.md",
+      "computedHash": "146d2a2811343b8dbdf6eb9cffb74518a9ed373b92b5b8fc4bc7d43a7e3c096c"
+    },
+    "generate-image": {
+      "source": "cluesmith/codev",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/generate-image/SKILL.md",
+      "computedHash": "c9f2aa8d778362dc25f523de55a3bd8c7ec240b8793d6ace425b861f2ba0fac8"
+    }
+  }
+}

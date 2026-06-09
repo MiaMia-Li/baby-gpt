@@ -1,0 +1,23 @@
+# 敏感信息 — 绝对不能提交
+.env
+
+# 虚拟环境
+venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时产生的文件（本地状态）
+logs/
+memory_db/
+*.log
+
+# 下载的远程 Skills（运行时产生，不提交）
+.agents/
+skills/*/
+
+# 本地生成文件
+decisions.html
+*.excalidraw
