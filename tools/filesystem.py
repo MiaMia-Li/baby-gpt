@@ -7,6 +7,9 @@ import subprocess
 from pathlib import Path
 from core.registry import register_tool
 
+# 禁止写入的系统路径前缀
+_WRITE_BLOCKED = ("/etc/", "/usr/", "/bin/", "/sbin/", "/sys/", "/dev/", "/boot/")
+
 
 @register_tool(
     description="读取本地文件内容。支持 md、txt、py、json、html、csv 等文本文件。",
@@ -178,3 +181,87 @@ def glob_files(pattern: str, path: str = ".") -> str:
         lines.append(f"...（还有 {len(matches)-100} 个）")
 
     return "\n".join(lines)
+
+
+@register_tool(
+    description=(
+        "将内容写入文件（创建新文件或完全覆盖已有文件）。"
+        "父目录不存在时自动创建。适合生成新文件或全量替换文件内容。"
+        "如需局部修改，请用 edit_file。"
+    ),
+    params={
+        "path":    "文件路径，如 './output.md' 或 '/tmp/result.json'",
+        "content": "要写入的文件内容（字符串）",
+    }
+)
+def write_file(path: str, content: str) -> str:
+    p = Path(path).expanduser()
+
+    resolved = str(p.resolve())
+    if any(resolved.startswith(blocked) for blocked in _WRITE_BLOCKED):
+        return f"❌ 拒绝写入系统路径：{resolved}"
+
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        existed = p.exists()
+        p.write_text(content, encoding="utf-8")
+        action = "已更新" if existed else "已创建"
+        lines  = content.count("\n") + 1
+        size   = p.stat().st_size
+        return f"✅ {action}：{p}\n   {lines} 行，{size:,} 字节"
+    except Exception as e:
+        return f"❌ 写入失败：{e}"
+
+
+@register_tool(
+    description=(
+        "在文件中做精确的字符串替换（搜索 old_str，替换为 new_str）。"
+        "old_str 必须在文件中唯一存在；找不到或有多处匹配时会报错，"
+        "请提供更多上下文让 old_str 唯一。适合局部修改，不需要重写整个文件。"
+    ),
+    params={
+        "path":    "要修改的文件路径",
+        "old_str": "要被替换的原始文本（必须与文件内容完全一致，包括空格和换行）",
+        "new_str": "替换后的新文本",
+    }
+)
+def edit_file(path: str, old_str: str, new_str: str) -> str:
+    p = Path(path).expanduser()
+
+    resolved = str(p.resolve())
+    if any(resolved.startswith(blocked) for blocked in _WRITE_BLOCKED):
+        return f"❌ 拒绝修改系统路径：{resolved}"
+
+    if not p.exists():
+        return f"❌ 文件不存在：{path}\n提示：如需创建新文件请用 write_file"
+    if not p.is_file():
+        return f"❌ 路径不是文件：{path}"
+
+    try:
+        original = p.read_text(encoding="utf-8")
+    except Exception as e:
+        return f"❌ 读取失败：{e}"
+
+    count = original.count(old_str)
+    if count == 0:
+        snippet = original[:300].replace("\n", "↵")
+        return (
+            f"❌ 未找到要替换的内容。\n"
+            f"   old_str 前 50 字：{repr(old_str[:50])}\n"
+            f"   文件前 300 字预览：{snippet}"
+        )
+    if count > 1:
+        return (
+            f"❌ old_str 在文件中出现了 {count} 次，无法确定替换哪一处。\n"
+            f"   请在 old_str 里加入更多上下文使其唯一。"
+        )
+
+    updated = original.replace(old_str, new_str, 1)
+    try:
+        p.write_text(updated, encoding="utf-8")
+    except Exception as e:
+        return f"❌ 写入失败：{e}"
+
+    old_lines = old_str.count("\n") + 1
+    new_lines = new_str.count("\n") + 1
+    return f"✅ 编辑成功：{p}\n   替换了 {old_lines} 行 → {new_lines} 行"

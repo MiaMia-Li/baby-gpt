@@ -105,6 +105,13 @@ def _parse_output(text: str) -> dict:
         args_str = text[start + 1 : end]
         return {"type": "action", "tool": tool_name, "args_str": args_str}
 
+    # 降级处理：LLM 在长对话中可能忘记加 "Final Answer:" 前缀，
+    # 但实际已输出有效内容。内容足够长且不含 Action 关键词，
+    # 视为省略了前缀的 Final Answer，避免触发 else 分支陷入混乱。
+    stripped = text.strip()
+    if len(stripped) > 80 and not re.search(r'\bAction[:：]', stripped):
+        return {"type": "final_answer", "content": stripped}
+
     return {"type": "unknown", "raw": text}
 
 

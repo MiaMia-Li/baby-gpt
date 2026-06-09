@@ -55,6 +55,13 @@ class AgentSession:
             # last_snapshot = [system] + history + 本轮所有 user/assistant
             # 去掉第一条 system，取出本轮新增的部分
             new_messages = last_snapshot[1 + len(self._history):]
+            # 过滤掉格式纠错注入消息 —— 这类消息是 agent 内部状态，
+            # 留在 history 里会让 LLM 把"遵守格式"当成主要任务。
+            _FORMAT_HINT = "请严格按照格式输出 Action 或 Final Answer"
+            new_messages = [
+                m for m in new_messages
+                if _FORMAT_HINT not in m.get("content", "")
+            ]
             # 再加上最终 answer 的 assistant 消息
             new_messages.append({"role": "assistant", "content": answer})
             self._history.extend(new_messages)
