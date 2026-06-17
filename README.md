@@ -48,13 +48,17 @@ make docker-run
 
 | 变量名 | 必填 | 说明 |
 |--------|------|------|
-| `DEEPSEEK_API_KEY` | ✅ | DeepSeek API Key（主 LLM） |
+| `LLM_PROVIDER` | 可选 | LLM 提供方：`anthropic`（Claude 原生 tool_use）或 `deepseek`（默认，ReAct 文本） |
+| `DEEPSEEK_API_KEY` | ✅* | DeepSeek API Key（默认主 LLM；用 Claude 时非必填） |
+| `ANTHROPIC_API_KEY` | ✅* | Claude API Key（`LLM_PROVIDER=anthropic` 时必填） |
+| `ANTHROPIC_MODEL` | 可选 | Claude 模型，默认 `claude-opus-4-8` |
 | `OPENAI_API_KEY` | 可选 | 图片生成功能需要 |
 | `GITHUB_PERSONAL_ACCESS_TOKEN` | 可选 | 启用 GitHub MCP（26 个工具） |
 | `TAVILY_API_KEY` | 可选 | 更好的网络搜索，无则自动用 DuckDuckGo |
 
 ## 功能
 
+- **双 LLM 后端** — DeepSeek（ReAct 文本，默认）/ Claude（Anthropic SDK 原生 `tool_use` 结构化调用），`LLM_PROVIDER` 一键切换
 - **ReAct 核心循环** — Thought → Action → Observation 迭代
 - **工具注册系统** — `@register_tool` 装饰器，`tools/` 目录自动扫描
 - **远程 Skill 加载** — `find_skills` + `load_skill`，运行时扩展能力
@@ -71,7 +75,7 @@ make docker-run
 baby-gpt/
 ├── core/
 │   ├── agent.py       ← ReAct 主循环
-│   ├── llm_client.py  ← LLM 调用（支持 DeepSeek / OpenAI）
+│   ├── llm_client.py  ← LLM 调用（DeepSeek / OpenAI / Claude·Anthropic SDK）
 │   ├── registry.py    ← 工具注册中心
 │   ├── session.py     ← 多轮对话管理
 │   └── tracer.py      ← 可观测性（Timeline + 日志）

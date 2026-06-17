@@ -58,9 +58,17 @@ def _auto_connect_mcp():
 def main():
     loaded = auto_discover("tools", "skills")
 
-    print("=" * 52)
-    print("   🤖  Universal ReAct Agent")
-    print("=" * 52)
+    from core.llm_client import get_provider
+    if get_provider() == "anthropic":
+        print("=" * 52)
+        print("   🤖  Universal ReAct Agent  ·  LLM: Claude")
+        print(f"   后端：Anthropic {os.getenv('ANTHROPIC_MODEL', 'claude-opus-4-8')} · 原生 tool_use")
+        print("=" * 52)
+    else:
+        print("=" * 52)
+        print("   🤖  Universal ReAct Agent  ·  LLM: DeepSeek/OpenAI")
+        print("   后端：OpenAI 兼容 · ReAct 文本解析")
+        print("=" * 52)
     print(f"已加载模块：{[m.split('.')[-1] for m in loaded]}")
     print(f"本地工具数：{len(get_registry())} 个")
 

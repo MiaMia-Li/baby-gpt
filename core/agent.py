@@ -11,9 +11,12 @@ core/agent.py — 通用 ReAct 主循环
 import re
 from pathlib import Path
 from datetime import datetime
-from core.llm_client import chat, set_log_file
-from core.registry import get_tools_description, execute_tool, _registry
+from core.llm_client import chat, set_log_file, get_provider, chat_anthropic
+from core.registry import get_tools_description, get_tools_schema, execute_tool, _registry
 from core.tracer import AgentTrace, StepRecord
+
+MAX_OBS = 3000          # Observation 截断上限，两条路径共用
+MAX_ITERATIONS = 25     # tool_use 循环的硬上限，防止失控
 
 
 def _build_system_prompt() -> str:
@@ -74,6 +77,36 @@ Final Answer: 给用户的完整答案（使用中文，清晰友好）
 - 不要猜测数据，必须通过工具获取
 - 如果工具返回错误，换个参数或换个思路
 """
+
+
+def _build_system_prompt_toolmode() -> str:
+    """
+    Claude tool_use 模式的 System Prompt。
+
+    【和 ReAct 版的区别】
+    - 不需要"Action: / Final Answer:"文本格式 —— Claude 用原生 tool_use
+    - 不需要内嵌工具说明书 —— 工具通过 API 的 tools 参数以 schema 传入
+    保留的是行为约束：自主扩展能力 + 主动记忆 + 不猜数据。
+    """
+    return """你是一个智能助手，能够使用工具来回答用户的问题。
+可用工具通过 API 的 tools 参数提供，需要时直接调用即可（无需输出任何特定文本格式）。
+
+【能力自扩展规则 — 最重要】
+当现有工具无法完成任务时（例如生成图片、搜索网页、发送邮件等），
+禁止直接说"我做不到"或放弃，必须主动扩展：
+- 用户给了 GitHub URL / 包名 → 直接调用 load_skill(url="...")
+- 没有 URL → 先 find_skills(query="英文关键词")，再用 load_skill 加载
+- ⚠️ 调用 find_skills 前先确认工具列表里确实没有能完成任务的工具
+
+【主动记忆规则】
+当用户提到个人偏好、个人事实（名字/预算/工作地点）、重要决定、明确要求时，
+在回答之前先调用 remember() 存起来。不需要用户说"帮我记住"，自动判断。
+普通闲聊、一次性问题不需要存。
+
+【其他规则】
+- 不要猜测数据，必须通过工具获取
+- 工具返回错误时，换个参数或换个思路
+- 信息足够时，用中文给出清晰、友好的最终答案"""
 
 
 def _parse_output(text: str) -> dict:
@@ -150,6 +183,101 @@ def _parse_args(args_str: str, tool_name: str = "") -> dict:
     return {}
 
 
+def _run_anthropic_loop(
+    user_question: str,
+    history:       list[dict] | None,
+    verbose:       bool,
+    verbose_llm:   bool,
+    trace:         AgentTrace,
+) -> str:
+    """
+    Claude 原生 tool_use 主循环。
+
+    和 ReAct 路径的本质区别：
+    - 工具调用是结构化的 tool_use block，block.input 已是 dict —— 直接
+      execute_tool(name, **input)，不再正则解析文本、不再 eval 参数。
+    - 工具结果作为 tool_result block 回传，而非 "Observation:" 文本。
+
+    会话历史兼容性：
+    循环内部用 Claude 的 block 消息（含 thinking / tool_use / tool_result），
+    但写进 trace 的 llm_input_snapshot 用一份"干净的 ReAct 形状"快照
+    （[system] + history + [user]，content 全是字符串），这样 session.py 的
+    历史重建逻辑和 tracer.py 的统计完全不用改 —— 跨轮历史仍是纯字符串对。
+    """
+    system_prompt = _build_system_prompt_toolmode()
+
+    # 干净快照：仅供 session/tracer 消费，不含循环内部的 block 消息
+    clean_snapshot = (
+        [{"role": "system", "content": system_prompt}]
+        + (history or [])
+        + [{"role": "user", "content": user_question}]
+    )
+
+    # 工作消息：循环内部真正发给 Claude 的（带 block 的）消息
+    messages: list[dict] = [dict(m) for m in (history or [])]
+    messages.append({"role": "user", "content": user_question})
+
+    step = 0
+    while True:
+        step += 1
+        if step > MAX_ITERATIONS:
+            answer = f"（已连续执行 {MAX_ITERATIONS} 步仍未完成，停止以避免失控。）"
+            trace.steps.append(StepRecord(step=step, llm_input_snapshot=clean_snapshot, llm_output=answer))
+            trace.answer = answer
+            return answer
+
+        if verbose:
+            print(f"\n── 第 {step} 步 {'─'*36}")
+
+        # 每轮重新生成 tools：load_skill 在循环中途加载的新工具能立即可用
+        tools = get_tools_schema()
+        resp = chat_anthropic(messages, tools, system_prompt, verbose_llm=verbose_llm)
+
+        # 把完整 content（含 thinking / tool_use）原样回写为 assistant 轮 —— tool_use 协议要求
+        messages.append({"role": "assistant", "content": resp.content})
+
+        text_out = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+        if verbose and not verbose_llm and text_out:
+            print(f"LLM：\n{text_out}")
+
+        # 不是 tool_use 就是终点（end_turn / max_tokens 等）
+        if resp.stop_reason != "tool_use":
+            trace.steps.append(StepRecord(step=step, llm_input_snapshot=clean_snapshot, llm_output=text_out))
+            trace.answer = text_out
+            if verbose:
+                print("  ✅ Final Answer")
+            return text_out
+
+        # 执行本轮所有 tool_use block，结果作为 tool_result 回传
+        tool_results = []
+        for block in resp.content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            observation = execute_tool(block.name, **dict(block.input))
+            if len(observation) > MAX_OBS:
+                observation = (
+                    observation[:MAX_OBS]
+                    + f"\n\n…[已截断，原始输出共 {len(observation)} 字符]"
+                )
+            if verbose:
+                args_preview = str(dict(block.input))[:60]
+                obs_preview  = observation[:100].replace("\n", " ")
+                print(f"  🔧 {block.name}({args_preview})")
+                print(f"  📋 {obs_preview}{'...' if len(observation) > 100 else ''}")
+
+            trace.steps.append(StepRecord(
+                step=step, llm_input_snapshot=clean_snapshot,
+                llm_output=text_out, action=block.name, observation=observation,
+            ))
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": observation,
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
+
 def run_agent(
     user_question: str,
     verbose:       bool            = True,
@@ -203,6 +331,17 @@ def run_agent(
     else:
         set_log_file(None)
 
+    # Claude 路径：原生 tool_use（结构化调用），与 DeepSeek 的 ReAct 文本路径分流
+    if get_provider() == "anthropic":
+        trace = AgentTrace(question=user_question)
+        if verbose:
+            print(f"\n{'='*52}")
+            print(f"问题：{user_question}")
+            print(f"{'='*52}")
+        answer = _run_anthropic_loop(user_question, history, verbose, verbose_llm, trace)
+        return (answer, trace) if return_trace else answer
+
+    # DeepSeek 路径（默认）：ReAct 文本解析
     # system prompt 放最前，历史对话居中，当前问题在最后
     # 注意：system prompt 每次重新生成，确保工具列表是最新的
     messages = (

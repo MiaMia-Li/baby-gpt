@@ -1,5 +1,6 @@
 # 核心运行依赖
 openai>=1.0.0          # LLM 调用（兼容 DeepSeek / OpenAI / 其他 OpenAI 格式 API）
+anthropic>=0.40.0      # Claude 原生 tool_use（LLM_PROVIDER=anthropic 时使用）
 python-dotenv>=1.0.0   # 读取 .env 文件
 
 # 搜索工具（二选一，自动降级）

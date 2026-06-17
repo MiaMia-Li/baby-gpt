@@ -106,6 +106,52 @@ def get_tools_description() -> str:
     return "\n".join(lines)
 
 
+# Python 类型注解名 → JSON Schema 类型（Anthropic tool input_schema 用）
+_JSON_TYPE_MAP = {
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+    "list": "array",
+    "dict": "object",
+}
+
+
+def get_tools_schema() -> list[dict]:
+    """
+    把注册表转换成 Anthropic Messages API 的 tools 结构（原生 tool_use）。
+
+    【为什么需要它】
+    DeepSeek 路径靠 System Prompt 里的文本说明书 + 正则解析 Action(...)。
+    Claude 路径用原生 tool_use：工具以结构化 schema 通过 tools 参数传入，
+    模型直接返回结构化的 tool_use block（input 已是 dict），无需解析文本。
+
+    复用 register_tool 已经从类型注解提取好的 params 元数据，
+    所以新增工具不用为 Claude 单独写 schema —— 和文本说明书同源。
+    """
+    tools = []
+    for tool_name, info in _registry.items():
+        properties = {}
+        required = []
+        for p_name, meta in info["params"].items():
+            properties[p_name] = {
+                "type": _JSON_TYPE_MAP.get(meta["type"], "string"),
+                "description": meta["desc"] or "",
+            }
+            if meta["required"]:
+                required.append(p_name)
+        tools.append({
+            "name": tool_name,
+            "description": info["description"],
+            "input_schema": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            },
+        })
+    return tools
+
+
 def execute_tool(tool_name: str, **kwargs) -> str:
     """
     Agent 调用工具的统一入口。

@@ -16,7 +16,7 @@ memory_db/
 
 # 下载的远程 Skills（运行时产生，不提交）
 .agents/
-skills/*/
+skills/*
 
 # 本地生成文件
 decisions.html
